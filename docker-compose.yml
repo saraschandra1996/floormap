@@ -13,3 +13,12 @@ services:
       - ./live_status.json:/opt/floormap/live_status.json
     env_file:
       - .env
+    # Integrated Docker scheduling to run the python fetch script every 12 hours
+    entrypoint: >
+      /bin/sh -c "
+      gunicorn --workers 3 --bind 0.0.0.0:8080 app:app &
+      while true; do
+        python3 fetch_data.py
+        sleep 43200
+      done
+      "
