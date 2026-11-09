@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Floor Map Dashboard</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+    <link rel="stylesheet" href="/frontend/css/index.css">
+</head>
+<body>
+
+    <!-- Header Navigation -->
+    <header class="navbar">
+        <div class="nav-brand">
+            <span class="brand-logo">Network Floor Map</span>
+            <nav class="nav-links">
+                <a href="/" class="active">Floor Map</a>
+                <a href="/history">History</a>
+            </nav>
+        </div>
+        <div class="nav-search-wrap">
+            <label class="toggle-switch">
+                <input type="checkbox" id="showSwitchInfo" onchange="refreshSidebar()"> Unhide Switch Info
+            </label>
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search IP, Hostname, or Desk..." onkeypress="if(event.key === 'Enter') searchDesk()">
+                <button onclick="searchDesk()">Find Desk</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Consolidated KPI & Category Ribbon -->
+    <section class="header-ribbon">
+        <div class="kpi-container">
+            <div class="kpi-badge" onclick="openModal('all_ports')" title="Total Configured Physical Ports">
+                <span>Total Ports:</span>
+                <span class="count" id="kpi-total-ports">0</span>
+            </div>
+            <div class="kpi-badge workstation" onclick="openModal('category', 'all', 'Workstation')" title="Workstations Fleet (Online + Offline)">
+                <span>Workstations:</span>
+                <span class="count" id="kpi-ws-total">0</span>
+            </div>
+            <div class="kpi-badge online" onclick="openModal('category', 'online', 'Workstation')" title="Active Online Workstations">
+                <span>Online:</span>
+                <span class="count" id="kpi-ws-online">0</span>
+            </div>
+            <div class="kpi-badge offline" onclick="openModal('category', 'offline', 'Workstation')" title="Inactive Workstations with Known History">
+                <span>Offline:</span>
+                <span class="count" id="kpi-ws-offline">0</span>
+            </div>
+            <div class="kpi-badge" onclick="openModal('unassigned')" title="Vacant / Unused Data Ports">
+                <span>Unassigned:</span>
+                <span class="count" id="kpi-unassigned">0</span>
+            </div>
+
+            <!-- Compact Allocation Category Picker -->
+            <div class="cat-select-wrap">
+                <span>Allocations:</span>
+                <select class="cat-dropdown" id="categoryPicker" onchange="inspectSelectedCategory()">
+                    <option value="">-- Inspect Category --</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="meta-poll">
+            Sync: <b id="last-updated">Connecting...</b>
+        </div>
+    </section>
+
+    <!-- Map & Details Workspace -->
+    <main class="main-workspace">
+        <div class="map-card-wrapper">
+            <div id="map-container">
+                <div class="floating-ctrls">
+                    <button class="ctrl-btn" onclick="zoomIn()" title="Zoom In">+</button>
+                    <button class="ctrl-btn" onclick="zoomOut()" title="Zoom Out">−</button>
+                    <button class="ctrl-btn" onclick="centerMap()" title="Fit to Screen">⛶</button>
+                </div>
+            </div>
+        </div>
+
+        <aside class="sidebar">
+            <div class="sidebar-header">Desk Parameters</div>
+            <div class="sidebar-body" id="sidebar">
+                <div class="sidebar-placeholder">Search, click a desk, or select from status cards to view details.</div>
+            </div>
+        </aside>
+    </main>
+
+    <!-- Cursor Tooltip -->
+    <div id="tooltip" class="desk-tooltip"></div>
+
+    <!-- Modal Directory Dialog -->
+    <div id="detailsModal" class="modal-overlay" onclick="closeModalOnOutsideClick(event)">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h4 id="modalTitle">Directory</h4>
+                <span class="modal-close" onclick="closeModal()">&times;</span>
+            </div>
+            <div class="modal-filter-row">
+                <input type="text" id="modalSearchInput" placeholder="Filter this list..." onkeyup="filterModalTable()">
+                <span id="modalRecordCount" style="font-size: 12px; color: var(--text-muted);"></span>
+            </div>
+            <div class="modal-content-area">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Desk ID</th>
+                            <th>Category</th>
+                            <th>Status</th>
+                            <th>IP Address</th>
+                            <th>Hostname</th>
+                            <th>Workstation ID</th>
+                            <th>Switch & Port</th>
+                        </tr>
+                    </thead>
+                    <tbody id="modalTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const mapContainer = document.getElementById('map-container');
+        const sidebar = document.getElementById('sidebar');
+        const tooltip = document.getElementById('tooltip');
+        const lastUpdatedText = document.getElementById('last-updated');
+
+        let panZoomInstance = null;
+        let cachedLiveData = {};
+        let flashInterval = null;
+        let highlightedElements = [];
+        let currentDeskId = null;
+        let currentDeskInfo = null;
+        let activeModalList = [];
+
+        const EXPECTED_CATEGORIES = [
+            "Workstation", "IT-Desk", "Audit", "Support", "Meeting Room-1",
+            "Meeting Room-2", "Network AD Cabin", "Conference-1", "Conference-2",
+            "Center Manager cabin", "VP Cabin", "HR", "Admin", "Reception"
+        ];
+
+        // Populate Category Dropdown
+        const picker = document.getElementById('categoryPicker');
+        EXPECTED_CATEGORIES.forEach(cat => {
+            const opt = document.createElement('option');
+            opt.value = cat;
+            opt.textContent = cat;
+            picker.appendChild(opt);
+        });
+
+        // Initialize SVG Map
+        fetch('/frontend/floorplan.svg')
+            .then(res => res.text())
+            .then(svgData => {
+                mapContainer.insertAdjacentHTML('afterbegin', svgData);
+                const svgElement = mapContainer.querySelector('svg');
+                svgElement.setAttribute('id', 'interactive-map');
+
+                panZoomInstance = svgPanZoom('#interactive-map', {
+                    zoomEnabled: true,
+                    controlIconsEnabled: false,
+                    fit: true,
+                    center: true,
+                    minZoom: 0.5,
+                    maxZoom: 15
+                });
+
+                fetchLiveStatus();
+                setInterval(fetchLiveStatus, 30000);
+            })
+            .catch(err => console.error("Error loading SVG:", err));
+
+        function normalizeCategory(rawCat) {
+            if (!rawCat) return "Workstation";
+            const trimmed = rawCat.trim();
+            const matched = EXPECTED_CATEGORIES.find(c => c.toLowerCase() === trimmed.toLowerCase());
+            return matched || trimmed;
+        }
+
+        function fetchLiveStatus() {
+            fetch('/api/live')
+                .then(res => res.json())
+                .then(data => {
+                    cachedLiveData = data.desks || {};
+                    lastUpdatedText.textContent = new Date(data.updated_at).toLocaleTimeString();
+
+                    let totalPorts = 0;
+                    let countUnassigned = 0;
+                    let wsOnline = 0;
+                    let wsOffline = 0;
+
+                    for (const [deskId, info] of Object.entries(cachedLiveData)) {
+                        totalPorts++;
+                        const isOnline = info.status === 'online';
+                        const hasHistory = !!(info.last_known_ip || info.last_known_mac || (info.workstation_id && info.workstation_id.trim()));
+                        const category = normalizeCategory(info.category);
+                        info.category = category;
+
+                        // Strict Workstation Fleet Logic
+                        if (category === 'Workstation') {
+                            if (isOnline) wsOnline++;
+                            else if (hasHistory) wsOffline++;
+                        }
+
+                        if (!isOnline && !hasHistory) countUnassigned++;
+
+                        const svgElement = document.getElementById(deskId);
+                        if (svgElement) {
+                            svgElement.style.cursor = 'pointer';
+                            if (!svgElement.dataset.isHighlighted) {
+                                const color = isOnline ? '#10b981' : '#ef4444';
+                                svgElement.style.fill = color;
+                                Array.from(svgElement.querySelectorAll('*')).forEach(child => { child.style.fill = color; });
+                            }
+
+                            svgElement.onclick = () => updateSidebar(deskId, info);
+                            svgElement.onmouseenter = (e) => showLightTooltip(e, deskId, info);
+                            svgElement.onmousemove = moveLightTooltip;
+                            svgElement.onmouseleave = hideLightTooltip;
+                        }
+                    }
+
+                    // Strict Workstation Total = Online + Offline
+                    const wsTotal = wsOnline + wsOffline;
+
+                    document.getElementById('kpi-total-ports').textContent = totalPorts;
+                    document.getElementById('kpi-ws-total').textContent = wsTotal;
+                    document.getElementById('kpi-ws-online').textContent = wsOnline;
+                    document.getElementById('kpi-ws-offline').textContent = wsOffline;
+                    document.getElementById('kpi-unassigned').textContent = countUnassigned;
+
+                    if (currentDeskId && cachedLiveData[currentDeskId]) {
+                        currentDeskInfo = cachedLiveData[currentDeskId];
+                        updateSidebar(currentDeskId, currentDeskInfo, true);
+                    }
+                });
+        }
+
+        function showLightTooltip(e, deskId, info) {
+            const isOnline = info.status === 'online';
+            tooltip.innerHTML = `<span>${deskId}</span> &bull; <span style="color:${isOnline ? '#34d399' : '#f87171'}">${info.status.toUpperCase()}</span>`;
+            tooltip.style.opacity = 1;
+            moveLightTooltip(e);
+        }
+        function moveLightTooltip(e) {
+            tooltip.style.left = (e.pageX + 12) + 'px';
+            tooltip.style.top = (e.pageY + 12) + 'px';
+        }
+        function hideLightTooltip() { tooltip.style.opacity = 0; }
+
+        function updateSidebar(deskId, info, isSilent = false) {
+            currentDeskId = deskId;
+            currentDeskInfo = info;
+            const isOnline = info.status === 'online';
+            const hasHistory = !!(info.last_known_ip || info.last_known_mac || (info.workstation_id && info.workstation_id.trim()));
+
+            let statusBadge = isOnline ? '<span class="status-pill status-online">Online</span>' :
+                             (hasHistory ? '<span class="status-pill status-offline">Offline</span>' :
+                             '<span class="status-pill status-unassigned">Unassigned</span>');
+
+            const showSwitch = document.getElementById('showSwitchInfo').checked;
+            const wsDisplay = info.workstation_id || 'N/A';
+            const displayIp = info.ip !== "N/A" ? info.ip : (info.last_known_ip ? `${info.last_known_ip} <small style="color:#64748b;">(Last)</small>` : "N/A");
+            const displayHost = info.hostname !== "N/A" ? info.hostname : (info.last_known_hostname ? `${info.last_known_hostname} <small style="color:#64748b;">(Last)</small>` : "N/A");
+
+            let html = `
+                <div class="detail-item">
+                    <span class="detail-label">Desk ID</span>
+                    <span class="detail-val" style="color:var(--brand-primary); font-size:14px;">${deskId}</span>
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Status</span>
+                    <span class="detail-val">${statusBadge}</span>
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Category</span>
+                    <span class="detail-val">${info.category}</span>
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Workstation ID</span>
+                    <span class="detail-val">
+                        ${wsDisplay}
+                        <span class="edit-icon" onclick="editWorkstationId('${deskId}', '${info.workstation_id}')" title="Edit ID">&#9998;</span>
+                    </span>
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Hostname</span>
+                    <span class="detail-val">${displayHost}</span>
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">IP Address</span>
+                    <span class="detail-val">${displayIp}</span>
+                </div>
+            `;
+
+            if (showSwitch) {
+                html += `
+                    <div class="detail-item">
+                        <span class="detail-label">Switch IP</span>
+                        <span class="detail-val">${info.switch_ip}</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Port Index</span>
+                        <span class="detail-val">${info.port}</span>
+                    </div>
+                `;
+            }
+
+            if (!isOnline && hasHistory) {
+                if (info.last_seen_ts) {
+                    html += `<div style="font-size:12px; color:var(--text-muted); text-align:center; margin-top:14px;">Last Online: ${info.last_seen_ts}</div>`;
+                    sidebar.innerHTML = html;
+                } else if (!isSilent) {
+                    html += `<div id="lastOnlineText" style="font-size:12px; color:var(--text-muted); text-align:center; margin-top:14px;">Fetching history...</div>`;
+                    sidebar.innerHTML = html;
+                    fetch(`/api/last_online/${deskId}`)
+                        .then(r => r.json())
+                        .then(d => {
+                            if (currentDeskId === deskId) {
+                                const el = document.getElementById('lastOnlineText');
+                                if (el) el.innerHTML = `Last Online: <b>${d.last_online}</b>`;
+                            }
+                        });
+                }
+            } else {
+                sidebar.innerHTML = html;
+            }
+        }
+
+        function refreshSidebar() {
+            if (currentDeskId && currentDeskInfo) updateSidebar(currentDeskId, currentDeskInfo);
+        }
+
+        function searchDesk() {
+            const term = document.getElementById('searchInput').value.toLowerCase().trim();
+            if (!term) return;
+
+            let targetDeskId = null;
+            for (const [deskId, info] of Object.entries(cachedLiveData)) {
+                if (info.ip?.toLowerCase() === term ||
+                    info.hostname?.toLowerCase().includes(term) ||
+                    info.last_known_ip?.toLowerCase() === term ||
+                    info.last_known_hostname?.toLowerCase().includes(term) ||
+                    info.workstation_id?.toLowerCase() === term ||
+                    deskId.toLowerCase() === term) {
+                    targetDeskId = deskId;
+                    break;
+                }
+            }
+
+            if (!targetDeskId) {
+                alert(`No records matching "${term}"`);
+                return;
+            }
+            zoomAndHighlightDesk(targetDeskId);
+        }
+
+        function zoomAndHighlightDesk(deskId) {
+            const targetElement = document.getElementById(deskId);
+            if (!targetElement) {
+                alert(`Desk ${deskId} was found in data but does not exist on this SVG layout.`);
+                return;
+            }
+
+            if (cachedLiveData[deskId]) updateSidebar(deskId, cachedLiveData[deskId]);
+
+            panZoomInstance.reset();
+            panZoomInstance.resize();
+
+            setTimeout(() => {
+                const bbox = targetElement.getBoundingClientRect();
+                const containerBox = mapContainer.getBoundingClientRect();
+                const centerX = bbox.left - containerBox.left + (bbox.width / 2);
+                const centerY = bbox.top - containerBox.top + (bbox.height / 2);
+                panZoomInstance.zoomAtPoint(5, { x: centerX, y: centerY });
+                applyJSHighlight(targetElement);
+            }, 50);
+        }
+
+        function applyJSHighlight(targetElement) {
+            clearHighlight();
+            targetElement.dataset.isHighlighted = "true";
+            const elements = [targetElement, ...Array.from(targetElement.querySelectorAll('*'))];
+
+            elements.forEach(el => {
+                highlightedElements.push({
+                    el,
+                    fill: el.style.fill || el.getAttribute('fill'),
+                    stroke: el.style.stroke || el.getAttribute('stroke'),
+                    strokeWidth: el.style.strokeWidth || el.getAttribute('stroke-width')
+                });
+            });
+
+            let toggle = false;
+            flashInterval = setInterval(() => {
+                toggle = !toggle;
+                elements.forEach(el => {
+                    el.style.setProperty('fill', toggle ? '#facc15' : '#ea580c', 'important');
+                    el.style.setProperty('stroke', toggle ? '#ea580c' : '#facc15', 'important');
+                    el.style.setProperty('stroke-width', toggle ? '4px' : '6px', 'important');
+                });
+            }, 450);
+        }
+
+        function clearHighlight() {
+            if (flashInterval) clearInterval(flashInterval);
+            highlightedElements.forEach(item => {
+                item.el.style.fill = item.fill;
+                item.el.style.stroke = item.stroke;
+                item.el.style.strokeWidth = item.strokeWidth;
+                delete item.el.dataset.isHighlighted;
+            });
+            highlightedElements = [];
+        }
+
+        function zoomIn() { panZoomInstance && panZoomInstance.zoomIn(); }
+        function zoomOut() { panZoomInstance && panZoomInstance.zoomOut(); }
+        function centerMap() {
+            if (panZoomInstance) {
+                panZoomInstance.reset();
+                panZoomInstance.fit();
+                panZoomInstance.center();
+            }
+        }
+
+        function inspectSelectedCategory() {
+            const val = document.getElementById('categoryPicker').value;
+            if (val) openModal('category', 'all', val);
+        }
+
+        function openModal(type, statusFilter = 'all', targetCat = '') {
+            const modal = document.getElementById('detailsModal');
+            const titleEl = document.getElementById('modalTitle');
+            document.getElementById('modalSearchInput').value = '';
+
+            let list = [];
+            let title = 'Directory';
+
+            for (const [deskId, info] of Object.entries(cachedLiveData)) {
+                const isOnline = info.status === 'online';
+                const hasHistory = !!(info.last_known_ip || info.last_known_mac || (info.workstation_id && info.workstation_id.trim()));
+                const cat = info.category;
+
+                if (type === 'all_ports') {
+                    title = 'All Configured Physical Ports';
+                    list.push({ deskId, ...info });
+                } else if (type === 'unassigned') {
+                    title = 'Vacant / Unassigned Ports';
+                    if (!isOnline && !hasHistory) list.push({ deskId, ...info });
+                } else if (type === 'category') {
+                    if (cat === targetCat) {
+                        if (statusFilter === 'all') {
+                            title = `${targetCat} &mdash; All Ports`;
+                            list.push({ deskId, ...info });
+                        } else if (statusFilter === 'online' && isOnline) {
+                            title = `${targetCat} &mdash; Online`;
+                            list.push({ deskId, ...info });
+                        } else if (statusFilter === 'offline' && !isOnline && hasHistory) {
+                            title = `${targetCat} &mdash; Offline`;
+                            list.push({ deskId, ...info });
+                        }
+                    }
+                }
+            }
+
+            titleEl.innerHTML = title;
+            activeModalList = list;
+            renderModalTable(list);
+            modal.style.display = 'flex';
+        }
+
+        function closeModal() { document.getElementById('detailsModal').style.display = 'none'; }
+        function closeModalOnOutsideClick(e) { if (e.target.id === 'detailsModal') closeModal(); }
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+        function renderModalTable(items) {
+            const tbody = document.getElementById('modalTableBody');
+            document.getElementById('modalRecordCount').textContent = `Showing ${items.length} records`;
+
+            if (items.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:#94a3b8; padding:30px;">No records found.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = items.map(item => {
+                const isOnline = item.status === 'online';
+                const hasHistory = !!(item.last_known_ip || item.last_known_mac || (item.workstation_id && item.workstation_id.trim()));
+
+                const badge = isOnline ? '<span class="status-pill status-online">Online</span>' :
+                             (hasHistory ? '<span class="status-pill status-offline">Offline</span>' :
+                             '<span class="status-pill status-unassigned">Unassigned</span>');
+
+                const ip = item.ip !== "N/A" ? item.ip : (item.last_known_ip || 'N/A');
+                const host = item.hostname !== "N/A" ? item.hostname : (item.last_known_hostname || 'N/A');
+                const ws = item.workstation_id || 'N/A';
+
+                return `
+                    <tr onclick="selectFromModal('${item.deskId}')">
+                        <td><b>${item.deskId}</b></td>
+                        <td>${item.category}</td>
+                        <td>${badge}</td>
+                        <td>${ip}</td>
+                        <td>${host}</td>
+                        <td>${ws}</td>
+                        <td style="color:#64748b;">${item.switch_ip}:${item.port}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function filterModalTable() {
+            const q = document.getElementById('modalSearchInput').value.toLowerCase().trim();
+            if (!q) { renderModalTable(activeModalList); return; }
+
+            const filtered = activeModalList.filter(item => {
+                return item.deskId.toLowerCase().includes(q) ||
+                       (item.ip && item.ip.toLowerCase().includes(q)) ||
+                       (item.last_known_ip && item.last_known_ip.toLowerCase().includes(q)) ||
+                       (item.hostname && item.hostname.toLowerCase().includes(q)) ||
+                       (item.last_known_hostname && item.last_known_hostname.toLowerCase().includes(q)) ||
+                       (item.workstation_id && item.workstation_id.toLowerCase().includes(q)) ||
+                       (item.category && item.category.toLowerCase().includes(q));
+            });
+            renderModalTable(filtered);
+        }
+
+        function selectFromModal(deskId) {
+            closeModal();
+            zoomAndHighlightDesk(deskId);
+        }
+
+        function editWorkstationId(deskId, currentWsId) {
+            const next = prompt(`Enter Workstation ID for ${deskId}:`, currentWsId || "");
+            if (next !== null) {
+                fetch('/api/update_workstation', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ desk_id: deskId, workstation_id: next.trim() })
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === "success") {
+                        if (cachedLiveData[deskId]) cachedLiveData[deskId].workstation_id = next.trim();
+                        updateSidebar(deskId, cachedLiveData[deskId]);
+                    } else {
+                        alert("Update failed: " + data.error);
+                    }
+                });
+            }
+        }
+    </script>
+</body>
+</html>

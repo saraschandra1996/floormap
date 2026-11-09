@@ -1,0 +1,15 @@
+version: '3.8'
+services:
+  floormap:
+    build: .
+    network_mode: "bridge"
+    container_name: floormap_dashboard
+    restart: unless-stopped
+    ports:
+      - "80:8080"
+    volumes:
+      - ./mapping.csv:/opt/floormap/mapping.csv
+      - ./floormap.db:/opt/floormap/floormap.db
+      - ./live_status.json:/opt/floormap/live_status.json
+    env_file:
+      - .env

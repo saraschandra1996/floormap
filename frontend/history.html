@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Floor Map - History Dashboard</title>
+    
+    <!-- DataTables & jQuery CSS -->
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+    <link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.4.2/css/buttons.dataTables.min.css">
+    
+    <style>
+        :root {
+            --bg-body: #f4f6f9;
+            --surface: #ffffff;
+            --border-color: #e2e8f0;
+            --text-main: #1e293b;
+            --text-muted: #64748b;
+            --brand-primary: #0284c7;
+            --brand-hover: #0369a1;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-body);
+            color: var(--text-main);
+        }
+
+        /* Top Bar */
+        .navbar {
+            background-color: #0f172a;
+            height: 52px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 20px;
+            flex-shrink: 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+        }
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        .brand-logo {
+            color: #ffffff;
+            font-weight: 700;
+            font-size: 15px;
+            letter-spacing: -0.3px;
+        }
+        .nav-links { display: flex; gap: 6px; }
+        .nav-links a {
+            color: #94a3b8;
+            text-decoration: none;
+            padding: 6px 12px;
+            border-radius: 5px;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.15s;
+        }
+        .nav-links a:hover { color: #ffffff; background-color: rgba(255,255,255,0.08); }
+        .nav-links a.active { color: #ffffff; background-color: var(--brand-primary); }
+
+        /* Main Workspace & Cards */
+        .main-workspace {
+            padding: 24px;
+            max-width: 1450px;
+            margin: 0 auto;
+        }
+        
+        .history-card {
+            background: var(--surface);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -2px rgba(0,0,0,0.05);
+            padding: 24px;
+        }
+
+        .header-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-main);
+            margin-top: 0;
+            margin-bottom: 20px;
+        }
+
+        /* Filter Controls */
+        .filter-section {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: #f8fafc;
+            padding: 14px 18px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 24px;
+        }
+        .filter-section label {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+        .filter-section input[type="date"] {
+            padding: 7px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-size: 13px;
+            color: var(--text-main);
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        .filter-section input[type="date"]:focus {
+            border-color: var(--brand-primary);
+        }
+        .filter-btn {
+            background: var(--brand-primary);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s;
+            margin-left: 8px;
+        }
+        .filter-btn:hover {
+            background: var(--brand-hover);
+        }
+
+        /* DataTables Custom Overrides */
+        table.dataTable thead th {
+            border-bottom: 1px solid var(--border-color) !important;
+            background-color: #f8fafc;
+            color: var(--text-muted);
+            font-size: 13px;
+            font-weight: 600;
+            padding: 12px 18px;
+        }
+        table.dataTable tbody td {
+            border-bottom: 1px solid var(--border-color) !important;
+            font-size: 13px;
+            color: var(--text-main);
+            padding: 12px 18px !important;
+        }
+        table.dataTable tbody tr:hover {
+            background-color: #f1f5f9 !important;
+        }
+        .dataTables_wrapper .dataTables_filter input {
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-size: 13px;
+            outline: none;
+            margin-left: 8px;
+        }
+        .dataTables_wrapper .dataTables_filter input:focus {
+            border-color: var(--brand-primary);
+        }
+        .dt-buttons .dt-button {
+            background: #ffffff !important;
+            border: 1px solid var(--border-color) !important;
+            border-radius: 4px !important;
+            color: var(--text-main) !important;
+            font-size: 13px !important;
+            font-weight: 500 !important;
+            padding: 6px 12px !important;
+        }
+        .dt-buttons .dt-button:hover {
+            background: #f8fafc !important;
+            border-color: #cbd5e1 !important;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header Navigation -->
+    <header class="navbar">
+        <div class="nav-brand">
+            <span class="brand-logo">Network Floor Map</span>
+            <nav class="nav-links">
+                <a href="/">Floor Map</a>
+                <a href="/history" class="active">History</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="main-workspace">
+        <div class="history-card">
+            <h2 class="header-title">Network History Log</h2>
+            
+            <div class="filter-section">
+                <label>Start Date:</label> 
+                <input type="date" id="start-date">
+                
+                <label>End Date:</label> 
+                <input type="date" id="end-date">
+                
+                <button class="filter-btn" onclick="reloadTable()">Filter Data</button>
+            </div>
+
+            <table id="historyTable" class="display" style="width:100%">
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Desk ID</th>
+                        <th>Switch IP</th>
+                        <th>Port</th>
+                        <th>MAC Address</th>
+                        <th>IP Address</th>
+                        <th>Hostname</th>
+                        <th>Status</th>
+                        <th>Down (Mbps)</th>
+                        <th>Up (Mbps)</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </main>
+
+    <!-- DataTables & jQuery Scripts -->
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/buttons/2.4.2/js/dataTables.buttons.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.html5.min.js"></script>
+    <script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.colVis.min.js"></script>
+
+    <script>
+        let table;
+
+        $(document).ready(function() {
+            table = $('#historyTable').DataTable({
+                ajax: {
+                    url: '/api/history_data',
+                    dataSrc: 'data'
+                },
+                columns: [
+                    { data: 'timestamp' },
+                    { data: 'desk_id' },
+                    { data: 'switch_ip' },
+                    { data: 'port' },
+                    { data: 'mac' },
+                    { data: 'ip' },
+                    { data: 'hostname' },
+                    { data: 'status',
+                      render: function(data, type, row) {
+                          if (type === 'display') {
+                              if (data === 'online') return `<span style="color: #10b981; font-weight: 600;">Online</span>`;
+                              return `<span style="color: #ef4444; font-weight: 600;">Offline</span>`;
+                          }
+                          return data;
+                      }
+                    },
+                    { data: 'download_mbps' },
+                    { data: 'upload_mbps' }
+                ],
+                dom: '<"top"Bf>rt<"bottom"lip><"clear">',
+                buttons: [
+                    'colvis',
+                    {
+                        extend: 'csvHtml5',
+                        text: 'Export CSV',
+                        title: 'FloorMap_Network_History'
+                    }
+                ],
+                order: [[0, 'desc']],
+                pageLength: 25
+            });
+        });
+
+        function reloadTable() {
+            const start = $('#start-date').val();
+            const end = $('#end-date').val();
+            
+            const newUrl = `/api/history_data?start=${start}&end=${end}`;
+            table.ajax.url(newUrl).load();
+        }
+    </script>
+</body>
+</html>

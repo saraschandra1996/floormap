@@ -1,0 +1,9 @@
+# Environments
+.env
+__pycache__/
+venv/
+
+# Database and Internal Corporate Data
+floormap.db
+live_status.json
+mapping.csv
